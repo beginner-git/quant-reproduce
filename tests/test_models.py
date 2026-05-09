@@ -1,5 +1,4 @@
 """Tests for common.models."""
-import pytest
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
