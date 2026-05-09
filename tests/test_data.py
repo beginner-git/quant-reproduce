@@ -1,7 +1,7 @@
 """Tests for common.data."""
 import torch
 
-from common.data import load_wikitext2_test
+from common.data import load_c4_calibration, load_wikitext2_test
 from common.models import load_tokenizer
 
 
@@ -21,9 +21,6 @@ def test_load_wikitext2_deterministic(tiny_model_id):
     a = load_wikitext2_test(tok)
     b = load_wikitext2_test(tok)
     assert torch.equal(a, b)
-
-
-from common.data import load_c4_calibration
 
 
 def test_load_c4_calibration_returns_list_of_long_tensors(tiny_model_id):
