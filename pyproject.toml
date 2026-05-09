@@ -28,7 +28,11 @@ include = ["common*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "require_cuda: requires CUDA-capable GPU",
+    "slow: long-running tests (lm-eval-harness, canonical-model runs)",
+]
 
 [tool.ruff]
 line-length = 110
