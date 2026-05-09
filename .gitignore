@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual envs (本仓库用 conda env，名字按 quant-{gptq,awq,billm,kivi}；这里挡常见 venv 目录)
+.venv/
+venv/
+env/
+.conda/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test / lint cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Model weights / checkpoints — 不进 git，靠 HF_HOME / 单独 sync
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.gguf
+*.onnx
+
+# 量化产物目录（每方法 repro.py --save-quant 写入这里）
+quantized_*/
+*/quantized_*/
+
+# HF cache 本地映射（如果 HF_HOME 软链到仓库内）
+hf_cache/
+models/
+
+# Phase 1 实测数字写到 results/，**保留进 git** — 它们就是作品集证据
+# 但 ppl_raw 这种调试中间文件不进
+*_raw.csv
+
+# 元数据 JSON 进 git（reproducibility 证据）
+# results/*_meta.json — 不忽略，刻意保留
+
+# Claude Code 本地权限/工具配置（不上传）
+.claude/settings.local.json
