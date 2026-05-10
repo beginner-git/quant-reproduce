@@ -82,17 +82,15 @@ F:\CODE\Quant\reproduce\
 │   │   └── memory.py           # weight + KV cache 字节数 profiler
 │   └── models.py               # HF 模型加载（统一 dtype / device / cache_dir）
 │
-├── GPTQ/                       # Phase 1 #1 — 子目录自带 conda env
-│   ├── README.md               # 跑法 + 实测数字 + 论文对比 + troubleshooting
-│   ├── requirements.txt        # 锁住 torch / auto-gptq 版本
-│   ├── env.yml                 # （可选）conda env 完整快照
-│   ├── repro.py                # 唯一入口：调官方代码 → common/eval → 写 results/
-│   ├── third_party/auto-gptq/  # git submodule（Phase 2 切到 -e 安装时启用）
-│   └── results/
-│       ├── ppl_w4g128.csv
-│       ├── zeroshot_w4g128.json
-│       └── memory_w4g128.json
-├── AWQ/   · BiLLM/   · KIVI/   # 同结构
+├── AWQ/                        # Phase 1 #1（修订 2026-05-10：先做 AWQ，GPTQ 改最后）
+│   ├── README.md               # 跑法（粘贴上游命令）+ 实测数字 + 论文对比 + troubleshooting
+│   ├── env.yml                 # conda env 定义（pytorch + autoawq）
+│   ├── third_party/AutoAWQ/    # git submodule，整个上游 repo
+│   └── results/                # 上游 stdout / quantized checkpoint / 元数据
+├── BiLLM/  · KIVI/             # 同结构（vendor 各自上游 repo）
+├── GPTQ/                       # Phase 1 最后做（GPTQModel library，需拼 quickstart）
+│   └── third_party/GPTQModel/  # 注：原计划的 third_party/auto-gptq/ 已废，AutoGPTQ archived 2025-04
+
 │
 ├── docs/
 │   ├── superpowers/specs/2026-05-09-quant-reproduce-design.md   # 本文档
@@ -195,10 +193,8 @@ def load_tokenizer(model_id) -> PreTrainedTokenizer
 ```
 GPTQ/
 ├── README.md               # 怎么跑 / 实测数字 / 论文对比表 / troubleshooting
-├── requirements.txt        # 锁住版本（含 torch、auto-gptq、pip install -e ../ 安装 common）
-├── env.yml                 # （可选）conda env 完整快照
-├── repro.py                # 唯一入口
-├── third_party/auto-gptq/  # git submodule，仅在源码研读 / 编译时启用
+├── env.yml                 # conda env 定义（pytorch + 该方法 pip 包）
+├── third_party/<UPSTREAM>/ # git submodule，整个上游 repo（AutoAWQ / BiLLM / KIVI / GPTQModel）
 └── results/
     ├── ppl_w4g128.csv
     ├── zeroshot_w4g128.json
@@ -226,29 +222,43 @@ python repro.py \
 
 ### 3.3 各方法 install 策略
 
-| 方法 | 安装 | 依据 |
-|------|------|------|
-| **GPTQ** | `pip install auto-gptq>=0.7` | 社区 fork 极成熟，原版 IST-DASLab/gptq 主要支持 OPT；auto-gptq 直接吃 LLaMA-2 |
-| **AWQ** | `pip install autoawq>=0.2` | casper-hansen/AutoAWQ 是事实标准，pre-built wheel 可用 |
-| **BiLLM** | git submodule + `pip install -e third_party/BiLLM` | 官方 repo 不在 PyPI，需要 patch 兼容性 |
-| **KIVI** | git submodule + `pip install -e third_party/KIVI` | 自定义 CUDA extension 必须本地编译 |
+> ⚠️ **修订（2026-05-10）**：原表把 GPTQ 列为 `pip install auto-gptq>=0.7`，但 [AutoGPTQ 已于 2025-04-11 archive](https://github.com/AutoGPTQ/AutoGPTQ)（最后版本 0.7.1，2024-03 发布；transformers 也已停止支持）。继任者是 [GPTQModel](https://github.com/ModelCloud/GPTQModel)，AutoGPTQ 的 fork/refactor，活跃维护，已被 transformers / optimum / peft 上游接纳。下表已更新；旧 auto-gptq 路径在历史 commit 中可查。
 
-> Phase 2 研读 GPTQ / AWQ 时再补加 submodule，把 install 切到 `-e` 模式以便修改追踪。
+| 方法 | 安装 | 上游 repo | 依据 |
+|------|------|----------|------|
+| **AWQ** | `pip install autoawq>=0.2 autoawq-kernels` | <https://github.com/casper-hansen/AutoAWQ> | 事实标准 + pre-built wheel + 自带 examples |
+| **BiLLM** | git submodule + `pip install -e third_party/BiLLM` | <https://github.com/Aaronhuang-778/BiLLM> | 不在 PyPI；自带 `run.py` 复现入口 |
+| **KIVI** | git submodule + 编 CUDA kernel | <https://github.com/jy-yuan/KIVI> | 自定义 CUDA extension 必须本地编译；自带 `pred.py` / `eval/ppl_eval.py` |
+| **GPTQ** | `pip install gptqmodel`（或 `git clone + pip install -v .`） | <https://github.com/ModelCloud/GPTQModel> | AutoGPTQ 继任，是 library（无 examples），需 ~7 行 quickstart 跑 |
 
-### 3.4 复现"完成"判定（与论文同量级）
+### 3.4 Phase 1 复现顺序（修订版）
+
+> ⚠️ **修订（2026-05-10）**：原顺序 `GPTQ → AWQ → BiLLM → KIVI` 假定 auto-gptq 是事实标准。AutoGPTQ archive 后这个假设破了。新顺序按"上游可复现脚本成熟度"排：
+
+```
+AWQ → BiLLM → KIVI → GPTQ（最后）
+```
+
+理由：
+- **AWQ 第一**：upstream `casper-hansen/AutoAWQ` 自带 `examples/quantize.py`，一行命令跑通；流程最干净，作为 walkthrough 模板。
+- **BiLLM 第二**：upstream 自带 `run.py` 一站式入口；BiLLM 内部其实用 GPTQ 风格的 layer-wise quant 框架，做完它你已经看过 GPTQ-flavor 代码。
+- **KIVI 第三**：独立路径（KV cache 而非权重），跟 AWQ/BiLLM 不重叠；放中间不影响别的。
+- **GPTQ 最后**：GPTQModel 是 library 无 examples，需要把上游 README quickstart 的 ~7 行 Python 当作"上游脚本"跑。前三个方法做完后，你已经习惯"vendor 上游 + 跑/拼上游代码"的工作方式，处理这种 library-only 的复杂度更稳。
+
+### 3.5 复现"完成"判定（与论文同量级）
 
 | 方法 | 模型 | 配置 | 论文 PPL（WT2，参考） | FP16 baseline | 容差判定 |
 |------|------|------|---------------------|---------------|---------|
-| GPTQ | LLaMA-2-7B | W4-g128 | ≈ 5.69 | ≈ 5.47 | **±0.3 PPL** |
 | AWQ  | LLaMA-2-7B | W4-g128 | ≈ 5.60 | ≈ 5.47 | **±0.3 PPL** |
 | BiLLM| LLaMA-2-7B | ≈ 1.08 bit | ≈ 32–35 | ≈ 5.47 | **同量级**：实测落 20–60 即可 |
 | KIVI | LLaMA-2-7B | KV-2bit | ≈ 5.55 | ≈ 5.47 | **±0.3 PPL** |
+| GPTQ | LLaMA-2-7B | W4-g128 | ≈ 5.69 | ≈ 5.47 | **±0.3 PPL**（用 GPTQModel 后实测可能略漂，按情况调） |
 
-> 表中是初始 anchor，实际复现以官方 README / 论文表格中具体数字为准。每方法 `README.md` 写"实测 X.YZ vs 论文 A.BC"两栏对照。
+> 表中是初始 anchor，实际复现以官方 README / 论文表格中具体数字为准。每方法 `README.md` 写"实测 X.YZ vs 论文 A.BC"两栏对照。行序按 §3.4 复现顺序排。
 >
 > **12GB 本地 smoke 跑**用 TinyLlama-1.1B 或 Qwen2-1.5B —— 这一档没有论文数字可比，只判定 **量化前后 PPL 单调正确**：量化后略升、量化越激进升越多。
 
-### 3.5 Phase 2 研读笔记 `docs/reports/<method>.md` 大纲
+### 3.6 Phase 2 研读笔记 `docs/reports/<method>.md` 大纲
 
 每篇五个固定小节，避免写到一半失焦：
 
@@ -295,7 +305,7 @@ pip install -e .                 # 从仓库根装 common
 
 每次跑完，`results/<config>_meta.json` 自动写入：
 
-- torch / transformers / auto-gptq（或对应方法库）等关键 pkg 版本号
+- torch / transformers / 该方法 pip 包（autoawq / gptqmodel / etc.）等关键 pkg 版本号
 - HF model commit SHA
 - calibration seed
 - 完整 CLI argv
@@ -349,7 +359,7 @@ pip install -e .                 # 从仓库根装 common
 | A.1 | 方案 B：`common/` 轻量共享 | A 松散布局 / C 重抽象 | 数字横向可比（A 不行）；不预先抽象算法（C 易抽象错） |
 | A.2 | Phase 3 占位、不预设计 | 一份 spec 涵盖三阶段 | 未读源码就抽象几乎一定错；Phase 1+2 完成后信息更全 |
 | A.3 | Phase 1 评测不含 latency | 跑 latency 数字 | 自定义 INT4 kernel ~2 周独立项目，与"同量级数字 + 源码理解"目标错位 |
-| A.4 | GPTQ → AWQ → BiLLM → KIVI 顺序 | 难度 / 兴趣 / 其他顺序 | 先权重族（共享 calibration & eval 路径），后 KV；难度递增；代码复用最大化 |
+| A.4 | ~~GPTQ → AWQ → BiLLM → KIVI 顺序~~ → **AWQ → BiLLM → KIVI → GPTQ**（修订 2026-05-10） | 按上游 repo 复现脚本成熟度而非时间序 | AutoGPTQ archive 后 GPTQ 失去 examples，要靠 GPTQModel library + 拼 quickstart；放最后等前三个方法形成"vendor + 跑上游脚本"肌肉记忆 |
 | A.5 | 每方法独立 conda env | 单一大 env | 四官方 repo 的 torch / cuda / triton 版本互不兼容 |
 | A.6 | Phase 1 用 LLaMA-2-7B canonical | 用更新模型 | 四篇论文都用它，是论文可比的唯一 anchor |
 | A.7 | 中文 spec / 英文代码 | 全英文 | 短期无 US-facing 公开计划；写作效率优先；申请前可补英文 README |
