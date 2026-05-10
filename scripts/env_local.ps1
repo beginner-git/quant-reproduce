@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $EnvName = "quant-$($Method.ToLower())"
-$YmlPath = Join-Path $PSScriptRoot ".." $Method "env.yml"
+$YmlPath = "$PSScriptRoot\..\$Method\env.yml"
 
 if (-not (Test-Path $YmlPath)) {
     Write-Error "No env.yml at $YmlPath"
@@ -30,6 +30,6 @@ Write-Host "  conda activate $EnvName" -ForegroundColor Yellow
 Write-Host "  pip install -e ." -ForegroundColor Yellow
 
 if (-not $env:HF_HOME) {
-    $defaultHfHome = Join-Path $HOME ".cache" "huggingface"
+    $defaultHfHome = "$HOME\.cache\huggingface"
     Write-Host "Tip: set `$env:HF_HOME = `"$defaultHfHome`" to share model cache across envs."
 }
