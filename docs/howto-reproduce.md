@@ -330,6 +330,65 @@ tests/test_models.py::test_load_hf_model_respects_dtype PASSED
 > pytest tests/test_eval_zeroshot.py -v -m slow
 > ```
 
+### 3.4 各方法 conda env 要求总览
+
+每个方法**独立 conda env**（命名 `quant-<method>`），不与其他方法或 base 混。原因：
+
+- transformers 版本互斥（BiLLM/KIVI 跟着论文当时 pin 在 4.36.x；AWQ 要 ≥4.42）
+- torch 主版本不同（BiLLM/KIVI 用 2.1.x；AWQ 要 ≥2.2；GPTQ 较灵活）
+- 自定义 CUDA kernel（KIVI）编译时与 torch 自带 CUDA runtime 绑死，错配直接编译失败
+
+下表是上游官方 repo 实际要求的归纳（截至 2026-01；具体以你 vendor 后看到的 `requirements.txt` 为准）：
+
+| 方法 | conda env name | Python | PyTorch | CUDA | 主依赖（pip） | 装法 | 上游来源 |
+|------|---------------|--------|---------|------|--------------|------|---------|
+| **GPTQ** | `quant-gptq`  | 3.10 | 2.2.x | 12.1 | `auto-gptq>=0.7,<1.0`、`transformers>=4.40` | pip pre-built wheel | <https://github.com/AutoGPTQ/AutoGPTQ> |
+| **AWQ**  | `quant-awq`   | 3.10 | 2.3.x | 12.1 | `autoawq>=0.2`、`autoawq-kernels`、`transformers>=4.42` | pip pre-built wheel | <https://github.com/casper-hansen/AutoAWQ> |
+| **BiLLM**| `quant-billm` | 3.10 | 2.1.x | 12.1 | (vendor) `transformers~=4.36`、`accelerate` | git submodule + `pip install -e third_party/BiLLM` | <https://github.com/Aaronhuang-778/BiLLM> |
+| **KIVI** | `quant-kivi`  | 3.10 | 2.1.x | 12.1 | (vendor) `transformers~=4.36`、`flash-attn>=2.4`、`triton` | git submodule + 编译 `setup_cuda.py` | <https://github.com/jy-yuan/KIVI> |
+
+> ⚠️ 这些版本号是**起步模板**，不是最终钦点。每方法 vendor 或装完之后，对照上游 README / `requirements.txt` 检查一遍：上游可能又改了 pin。如果 vendor 后 `pip install -r third_party/<repo>/requirements.txt` 报版本冲突，**优先按 vendor repo 的 pin** 调你的 `<METHOD>/env.yml`。
+
+### 3.5 每个方法的 env 都要的"公共底座"
+
+不管哪个方法，下面这套必须在 env 里：
+
+```yaml
+# 每个 <METHOD>/env.yml 都长这样
+name: quant-<method>
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.x.*           # 各方法不同，见 §3.4 表
+  - pytorch-cuda=12.1       # 与上面 torch CUDA 版必须一致
+  - pip:
+    - -r requirements.txt   # 该方法的 pip 依赖
+```
+
+```text
+# 每个 <METHOD>/requirements.txt 都至少含这些（公共部分）
+transformers>=4.40           # 各方法可能 pin 不同的版本
+accelerate>=0.27
+datasets>=2.18
+sentencepiece                # LLaMA / Mistral tokenizer 必须
+lm-eval>=0.4.2               # 用于 zero-shot 评测
+# ↓ 加各方法专属的 pip 包 ↓
+```
+
+**装完 env 后还要在 env 里手动跑一次：**
+
+```powershell
+conda activate quant-<method>
+cd F:\CODE\Quant\reproduce
+pip install -e .             # 把仓库根装成 common 包，让 repro.py 能 from common.* import
+```
+
+> 共享的不是 `env`（每个 env 都独立），共享的是 **`HF_HOME` 的模型 cache**（§2.3）和 **`common/` 这个包源码**（每个 env 各自 `pip install -e .` 装一份指向同一份代码）。
+
 ---
 
 ## §4 通用方法工作流（每方法 6 步）
@@ -482,10 +541,68 @@ python repro.py `
 | 文件 | 作用 |
 |------|------|
 | `GPTQ/README.md` | 跑法、数字表、对论文对比、troubleshooting 节 |
-| `GPTQ/env.yml` | conda env 定义（含 pytorch-cuda=12.1 + auto-gptq） |
-| `GPTQ/requirements.txt` | pip 依赖（auto-gptq>=0.7,<1.0 + transformers + ...） |
+| `GPTQ/env.yml` | conda env 定义（pytorch=2.2.* + pytorch-cuda=12.1） |
+| `GPTQ/requirements.txt` | pip 依赖（auto-gptq + transformers + ...） |
 | `GPTQ/repro.py` | 占位 stub（Task 9–10 才填实） |
 | `GPTQ/results/.gitkeep` | 让空目录进 git |
+
+#### `GPTQ/env.yml` 模板
+
+```yaml
+name: quant-gptq
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.2.*           # auto-gptq 0.7.x 与 torch 2.2 兼容良好
+  - pytorch-cuda=12.1       # 与本机 NVIDIA 驱动对应（nvidia-smi 应≥12.1）
+  - pip:
+    - -r requirements.txt
+```
+
+#### `GPTQ/requirements.txt` 模板
+
+```text
+# 核心算法
+auto-gptq>=0.7,<1.0          # 社区 fork，LLaMA-2 支持成熟；< 1.0 锁住 0.7.x
+optimum>=1.20                # auto-gptq <-> transformers 集成层
+
+# HuggingFace 生态（与 common 一致）
+transformers>=4.40           # auto-gptq 0.7.x 测过的最低
+accelerate>=0.27
+datasets>=2.18
+sentencepiece                # LLaMA-2 tokenizer 强制依赖
+
+# 评测
+lm-eval>=0.4.2
+```
+
+> auto-gptq 是 pip pre-built wheel，无需本机 CUDA Toolkit；只要 `nvidia-smi` 能跑 + `pytorch-cuda=12.1` 装上即可。
+>
+> 上游版本动向：auto-gptq 上游已停止维护（2024Q4 后），但 0.7.x 仍是 LLaMA-2 复现的事实标准。如果未来你想升 transformers ≥ 5，会有兼容性问题——届时考虑切到 transformers 自己的 `GPTQConfig`（`from transformers import GPTQConfig`）替代 auto-gptq。
+
+#### `GPTQ/README.md` 模板（先填占位，跑完 §5.6 再填实数）
+
+最少包含三节：
+
+```markdown
+# GPTQ - LLaMA-2-7B 复现
+
+## 用法
+（粘贴 §5.4 烟雾跑、§5.5 canonical 跑命令）
+
+## 实测 vs 论文
+| Config | Model | Metric | 实测 | 论文 anchor | 判定 |
+|--------|-------|--------|------|------------|------|
+| w4g128 | LLaMA-2-7B | WT2 PPL | _TBD_ | ≈ 5.69 | _TBD_ |
+| ... | | | | | |
+
+## Troubleshooting
+（如果数字打不到，记录在这）
+```
 
 **完成后**：
 
@@ -770,7 +887,32 @@ GPTQ 之后的三个方法都是 §5 流程的变体。**只换 §5.3（algorith
 
 ### §6.1 AWQ
 
-- **装法**：`pip install autoawq>=0.2`（写进 `AWQ/requirements.txt`）。
+- **装法**：pre-built wheel + 推理 kernel 包，不需要 vendor。
+- **`AWQ/env.yml`**：
+  ```yaml
+  name: quant-awq
+  channels:
+    - pytorch
+    - nvidia
+    - conda-forge
+  dependencies:
+    - python=3.10
+    - pip
+    - pytorch=2.3.*            # autoawq 0.2 要求 torch ≥ 2.2
+    - pytorch-cuda=12.1
+    - pip:
+      - -r requirements.txt
+  ```
+- **`AWQ/requirements.txt`**：
+  ```text
+  autoawq>=0.2                 # 主算法
+  autoawq-kernels              # 推理 kernel；让 W4-g128 真用 INT4 GEMM 算
+  transformers>=4.42           # autoawq 0.2 测过的最低
+  accelerate>=0.27
+  datasets>=2.18
+  sentencepiece
+  lm-eval>=0.4.2
+  ```
 - **关键 API**：
   ```python
   from awq import AutoAWQForCausalLM
@@ -794,36 +936,98 @@ GPTQ 之后的三个方法都是 §5 流程的变体。**只换 §5.3（algorith
   ```bash
   cd BiLLM
   git submodule add https://github.com/Aaronhuang-778/BiLLM third_party/BiLLM
-  cd third_party/BiLLM
-  pip install -r requirements.txt
-  cd ../..
-  pip install -e .   # 让 BiLLM 模块可 import
   ```
-  > 注：BiLLM 的 `requirements.txt` 经常 pin 老版本 transformers，跟我们 lm-eval 的版本可能冲突。这种情况：用 BiLLM 自己的 venv（不与其它方法共享 common 也行）；或 patch BiLLM 的代码兼容新 transformers。
+- **`BiLLM/env.yml`**（vendor 后再依据 `third_party/BiLLM/requirements.txt` 微调）：
+  ```yaml
+  name: quant-billm
+  channels:
+    - pytorch
+    - nvidia
+    - conda-forge
+  dependencies:
+    - python=3.10
+    - pip
+    - pytorch=2.1.*            # BiLLM 论文 repo 测过的版本
+    - pytorch-cuda=12.1
+    - pip:
+      - -r requirements.txt
+  ```
+- **`BiLLM/requirements.txt`**（起步模板，vendor 后再调和）：
+  ```text
+  # vendor 之后看 third_party/BiLLM/requirements.txt 的实际 pin
+  transformers~=4.36           # BiLLM 论文当时的版本族
+  accelerate
+  datasets
+  sentencepiece
+  lm-eval>=0.4.2
+
+  # BiLLM 包本身（vendor 后用 -e 装）
+  -e ./third_party/BiLLM
+  ```
+- **vendor 后的安装顺序**：
+  ```powershell
+  conda activate quant-billm
+  cd F:\CODE\Quant\reproduce
+  pip install -e .                        # common
+  pip install -e ./BiLLM/third_party/BiLLM  # BiLLM 自身
+  ```
+  > 注：BiLLM 的 `requirements.txt` 经常 pin 较老的 transformers，跟新版 lm-eval 可能冲突。版本互斥时优先按 BiLLM 的 pin，必要时把 `lm_eval` 替换成 BiLLM 自带的 eval 脚本。
 - **二值化（≈1 bit）**：salient-residual 分解。盐分敏感：照 BiLLM 论文 / repo 默认参数跑，不要自己改阈值。
-- **论文 anchor**: LLaMA-2-7B / 实测 PPL **20–60 都算"同量级"**（baseline 5.47，二值化容忍度大）。这是为什么 §3.4 给 BiLLM 的判定用"同量级"而不是 ±0.3。
+- **论文 anchor**: LLaMA-2-7B / 实测 PPL **20–60 都算"同量级"**（baseline 5.47，二值化容忍度大）。这是为什么 [设计文档 §3.4](superpowers/specs/2026-05-09-quant-reproduce-design.md#34-复现完成判定与论文同量级) 给 BiLLM 的判定用"同量级"而不是 ±0.3。
 - **跑时间**：1–4 小时（最长）；**不要在 12GB 本地跑 canonical**，OOM。
 - **重点研读**：BiLLM 的 salient mask 怎么定（Phase 2 笔记 §3 节）、binarization+残差的具体形式。
 
 ### §6.3 KIVI（流程最不同）
 
 - **不需要 calibration**。KIVI 是 inference-time KV cache 量化（per-channel keys + per-token values, 2bit），跟权重量化是两个层面。
-- **vendor + 编译 CUDA extension**：
+- **vendor + 编译 CUDA extension**（必须本机有 CUDA Toolkit + nvcc，§1.3）：
   ```bash
   cd KIVI
   git submodule add https://github.com/jy-yuan/KIVI third_party/KIVI
-  cd third_party/KIVI
-  pip install -r requirements.txt
-  cd quant && python setup_cuda.py install   # 编译自定义 CUDA kernel
-  cd ../../..
   ```
-  - **前置**：本机有 CUDA Toolkit + nvcc（§1.3）。Lab 服务器上一般有。
+- **`KIVI/env.yml`**：
+  ```yaml
+  name: quant-kivi
+  channels:
+    - pytorch
+    - nvidia
+    - conda-forge
+  dependencies:
+    - python=3.10
+    - pip
+    - pytorch=2.1.*            # KIVI 官方 README 指定 2.1.x
+    - pytorch-cuda=12.1        # 必须与下面 nvcc 12.1 一致
+    - cuda-toolkit=12.1        # 提供 nvcc 用于编译自定义 kernel（lab 服务器上可走 module load 替代）
+    - pip:
+      - -r requirements.txt
+  ```
+- **`KIVI/requirements.txt`**：
+  ```text
+  # vendor 后看 third_party/KIVI/requirements.txt 同步具体版本
+  transformers~=4.36           # KIVI 论文当时的版本族
+  accelerate
+  datasets
+  flash-attn>=2.4              # KIVI 推理路径用 flash attention
+  triton>=2.1                  # 部分 KIVI kernel 用 triton
+  sentencepiece
+  lm-eval>=0.4.2
+  ```
+- **vendor 后的安装顺序**（关键步：编译自定义 CUDA kernel）：
+  ```bash
+  conda activate quant-kivi
+  cd ~/quant-reproduce
+  pip install -e .                                          # common
+
+  cd KIVI/third_party/KIVI
+  pip install -r requirements.txt                           # 装 transformers/datasets 等
+  cd quant && python setup_cuda.py install                  # ← 编译，~5-10 分钟
+  ```
   - **常见编译失败**：nvcc 版本与 PyTorch 自带 CUDA runtime 不匹配。检查：
     ```bash
     nvcc --version          # 编译器
     python -c "import torch; print(torch.version.cuda)"   # PyTorch 期望
     ```
-    两者主版本号要一致（都是 12.1 或都是 11.8）。
+    两者主版本号要一致（都是 12.1 或都是 11.8）。conda env 里 `pytorch-cuda=12.1` + `cuda-toolkit=12.1` 同 channel 装就一致。
 - **`repro.py` 改造**：
   - Step 3（calibration）跳过
   - Step 4（量化）变成把 KIVI 的自定义 attention monkey-patch 到 HF model：
