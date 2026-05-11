@@ -1,0 +1,3 @@
+[submodule "AWQ/third_party/AutoAWQ"]
+	path = AWQ/third_party/AutoAWQ
+	url = https://github.com/casper-hansen/AutoAWQ
