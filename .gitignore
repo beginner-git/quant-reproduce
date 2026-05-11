@@ -40,6 +40,9 @@ Thumbs.db
 quantized_*/
 */quantized_*/
 
+# Smoke 跑产物（per howto §5.3，本地验证用，不进 git）
+*/results/smoke/
+
 # HF cache 本地映射（如果 HF_HOME 软链到仓库内）
 hf_cache/
 models/
