@@ -1,3 +1,6 @@
 [submodule "AWQ/third_party/AutoAWQ"]
 	path = AWQ/third_party/AutoAWQ
 	url = https://github.com/casper-hansen/AutoAWQ
+[submodule "BiLLM/third_party/BiLLM"]
+	path = BiLLM/third_party/BiLLM
+	url = https://github.com/Aaronhuang-778/BiLLM
