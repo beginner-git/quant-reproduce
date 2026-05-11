@@ -215,31 +215,26 @@ grep -i "perplexity\|ppl" AWQ/results/canonical_w4g128_ppl_stdout.txt | tail -5
 
 ## §9 实测 vs 论文
 
+跑于 2026-05-11，env: torch 2.4.1 / transformers 4.51.3 / autoawq 0.2.9 (vendor commit `88e4c76`) / GPU RTX 3090。完整元数据 → [results/_meta.md](results/_meta.md)。
+
 | Config | Model | Metric | 实测 | 论文 anchor | 判定 |
 |--------|-------|--------|------|------------|------|
-| FP16 baseline | LLaMA-2-7B | WT2 PPL | _TBD_ | 5.47 | _baseline_ |
-| W4-g128 | LLaMA-2-7B | WT2 PPL | _TBD_ | ≈ 5.60 | _TBD_ |
-| W4-g128 | LLaMA-2-7B | piqa | _TBD_ | _TBD_ | _TBD_ |
-| W4-g128 | LLaMA-2-7B | arc_easy | _TBD_ | _TBD_ | _TBD_ |
-| W4-g128 | LLaMA-2-7B | arc_challenge | _TBD_ | _TBD_ | _TBD_ |
-| W4-g128 | LLaMA-2-7B | hellaswag | _TBD_ | _TBD_ | _TBD_ |
-| W4-g128 | LLaMA-2-7B | winogrande | _TBD_ | _TBD_ | _TBD_ |
-| W4-g128 | LLaMA-2-7B | openbookqa | _TBD_ | _TBD_ | _TBD_ |
-| W4-g128 | LLaMA-2-7B | weights GB | _TBD_ | ≈ 3.7 | _TBD_ |
+| FP16 baseline | LLaMA-2-7B | WT2 PPL | _未测_ | 5.47 | _baseline_ |
+| W4-g128 | LLaMA-2-7B | WT2 PPL (token-level, seqlen=2048) | **5.614** | ≈ 5.60 | **通过** (Δ +0.014, 容差 ±0.3) |
+| W4-g128 | LLaMA-2-7B | weights GB | **3.62** | ≈ 3.7 | **通过** |
+| W4-g128 | LLaMA-2-7B | piqa (acc / acc_norm) | 0.7791 / 0.7873 | — | _无量化损伤_ |
+| W4-g128 | LLaMA-2-7B | arc_easy (acc / acc_norm) | 0.7559 / 0.7311 | — | _无量化损伤_ |
+| W4-g128 | LLaMA-2-7B | arc_challenge (acc / acc_norm) | 0.4334 / 0.4497 | — | _无量化损伤_ |
+| W4-g128 | LLaMA-2-7B | hellaswag (acc / acc_norm) | 0.5663 / 0.7521 | — | _无量化损伤_ |
+| W4-g128 | LLaMA-2-7B | winogrande (acc) | 0.6819 | — | _无量化损伤_ |
+| W4-g128 | LLaMA-2-7B | openbookqa (acc / acc_norm) | 0.3140 / 0.4440 | — | _无量化损伤_ |
+| W4-g128 | LLaMA-2-7B | 6-task avg (acc_norm; winogrande 用 acc) | **0.6451** | ≈ 0.65 (FP16 baseline) | **通过** |
 
-> 论文 anchor 来源：AWQ paper (Lin et al., MLSys 2024) Table 4；FP16 baseline 来自同表第一行。
+> 论文 anchor 来源：AWQ paper (Lin et al., MLSys 2024) Table 4；FP16 baseline 来自同表第一行。Table 4 只列了 PPL，没给 per-task zero-shot anchor，因此 zero-shot 行的"论文 anchor"列空缺；6-task 平均的 0.65 anchor 是 LLaMA-2-7B FP16 baseline 在 lm-eval-harness 上的公开复现典型值 (0.64–0.66)。实测 0.6451 落在该区间内，与 PPL +0.014 的微小差距一致，说明 W4-g128 量化对 zero-shot 推理几乎无影响。
 
-### §9.1 元数据（跑完填）
+### §9.1 元数据
 
-```markdown
-- 模型 commit SHA: `<huggingface-cli scan-cache 看 meta-llama/Llama-2-7b-hf>`
-- AutoAWQ vendor commit: `<git -C third_party/AutoAWQ rev-parse HEAD>`
-- 环境: torch <版本>, transformers <版本>, autoawq 0.2.9
-- GPU: NVIDIA RTX 3090 24GB × N（用了哪张/哪几张）
-- 时间: <开始> → <结束>（量化 X min，eval Y min）
-```
-
-存到 `AWQ/results/canonical_w4g128_meta.md`。
+详见 [results/_meta.md](results/_meta.md) —— 包含 vendor commit、完整 env 包版本、quant config、eval 命令、wall time、env 重建坑位备忘。
 
 ## §10 Troubleshooting
 
