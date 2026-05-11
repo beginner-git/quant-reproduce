@@ -4,6 +4,8 @@
 
 > **上游状态**：AutoAWQ 已 [officially deprecated](https://github.com/casper-hansen/AutoAWQ#news-the-vllm-project-has-fully-adopted-autoawq)，最后官测 torch 2.6.0 / transformers 4.51.3。我们 vendor 一份固定版本，不受未来 API 变动影响。
 
+> **运行环境**：本服务器（4× RTX 3090, 24GB each），账号 `yiminl50`。所有路径按服务器约定走 `/shared/yiminl50/...`；存储规则见 `~/notes/SERVER_GUIDE.md`。
+
 ## §0 目标 & 验收
 
 | 项 | 值 |
@@ -15,21 +17,22 @@
 | 论文 anchor | WT2 PPL ≈ 5.60（AWQ paper Table 4），weights ≈ 3.7 GB |
 | 验收 | WT2 PPL 与 anchor 差 ≤ ±0.3；weights 真 INT4 packed |
 
-## §1 前置条件
+## §1 前置条件（本机已满足）
 
-- **GPU**：NVIDIA Compute Capability ≥7.5（Turing/Ampere/Ada/Hopper），≥16 GB VRAM 建议（量化峰值 ~14 GB）
-- **CUDA driver**：≥12.1（PyTorch 2.4 + autoawq-kernels prebuilt 要求）
-- **conda**：≥23.x
-- **HuggingFace 账号**：已接受 Llama-2 许可（<https://huggingface.co/meta-llama/Llama-2-7b-hf>）
+- **GPU**：4× RTX 3090（Ampere，compute capability 8.6，24 GB VRAM 各张）— ✅
+- **CUDA driver**：12.4（`nvidia-smi` 右上角） — ✅
+- **nvcc**：12.0（`/usr/local/cuda`） — ✅ 仅 BiLLM/KIVI 用，AWQ 走 prebuilt wheel
+- **conda**：在 `/shared/yiminl50/miniconda3`，env 自动落 `/shared/yiminl50/conda_envs/` — ✅
+- **HuggingFace token**：登录过即可（`huggingface-cli whoami` 验证）
+- **Llama-2 license**：HF 上接受过 `meta-llama/Llama-2-7b-hf` 使用条款
 
-> **本地烟雾跑用 TinyLlama-1.1B**（不需 Llama-2 license），12 GB VRAM 即可。Canonical 跑放 lab 服务器。
+> Smoke 跑用 TinyLlama-1.1B（无 license 要求）；canonical 跑用 LLaMA-2-7B。两者都在本服务器一台机器上跑，按 `CUDA_VISIBLE_DEVICES` 选卡。
 
 ## §2 创建 conda env
 
 ```bash
-cd /path/to/quant/reproduce          # repo 根
-bash scripts/env_lab.sh AWQ          # Linux lab
-# 或 Windows: .\scripts\env_local.ps1 AWQ
+cd ~/projects/reproduce
+bash scripts/env_lab.sh AWQ           # 自动落 /shared/yiminl50/conda_envs/quant-awq
 conda activate quant-awq
 ```
 
@@ -38,7 +41,7 @@ conda activate quant-awq
 ## §3 从源码装 AutoAWQ（关键步骤）
 
 ```bash
-cd AWQ/third_party/AutoAWQ
+cd ~/projects/reproduce/AWQ/third_party/AutoAWQ
 pip install -e ".[kernels,eval]"
 ```
 
@@ -49,7 +52,7 @@ pip install -e ".[kernels,eval]"
 
 `setup.py` 的 `install_requires` 会自动把 `transformers>=4.45 / triton / accelerate / datasets>=2.20 / huggingface_hub>=0.26.5 / zstandard / typing_extensions>=4.8 / tokenizers>=0.12.1` 一并装上。
 
-> **flash-attn 编译慢警告**：`flash-attn>=2.2` 第一次装可能编译 5-15 分钟，吃满 CPU。如果只想先跑通，可改成 `pip install -e ".[eval]"` 跳过 kernels；后续再补。**纯量化不需要 kernels**（kernels 只影响推理速度，不影响 PPL 数字）。
+> **flash-attn 编译慢警告**：`flash-attn>=2.2` 第一次装可能编译 5-15 分钟，吃满 CPU（32C 服务器上略快）。建议开 tmux 跑：`tmux new -s awq-install`。如果只想先跑通量化，可改成 `pip install -e ".[eval]"` 跳过 kernels；后续再补。**纯量化不需要 kernels**（kernels 只影响推理速度，不影响 PPL 数字）。
 
 ## §4 验证安装
 
@@ -67,7 +70,7 @@ python -c "import lm_eval; print('lm_eval', lm_eval.__version__)"
 # 期望: lm_eval 0.4.1
 
 # vendor commit SHA（meta 元数据用）
-git -C AWQ/third_party/AutoAWQ rev-parse HEAD
+git -C ~/projects/reproduce/AWQ/third_party/AutoAWQ rev-parse HEAD
 ```
 
 如果 `import awq` 弹 deprecation warning 是正常的，上游故意留的 final dev message。
@@ -85,23 +88,26 @@ AutoModelForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf')
 "
 ```
 
-如果未设置 `$HF_HOME`：默认落 `~/.cache/huggingface/`。lab 上建议 `export HF_HOME=/shared/huggingface_cache` 共享缓存。
+> `$HF_HOME` 已在 `~/.bashrc` 设置为 `/shared/yiminl50/hf_cache`，14GB 权重落那里跨 env 共享。第一次下载几分钟到十几分钟（取决于网速）；后续 env 直接命中 cache。
 
-## §6 烟雾跑（本地，TinyLlama-1.1B，~5 min）
+## §6 烟雾跑（TinyLlama-1.1B，~5 min）
 
 目的：验证整条 quantize → save → eval 链路通，**不**关心数字。
 
 ```bash
-cd AWQ/third_party/AutoAWQ
+# 先 `gpu` 看哪张卡闲；开 tmux 防 ssh 掉线
+tmux new -s awq-smoke
+gpu                                   # nvidia-smi 别名；找空闲卡，下面假设 0 号
 
-mkdir -p ../../results/smoke
+conda activate quant-awq
+cd ~/projects/reproduce/AWQ/third_party/AutoAWQ
 
-python -c "
+CUDA_VISIBLE_DEVICES=0 python -c "
 from awq import AutoAWQForCausalLM
 from transformers import AutoTokenizer
 
 model_path = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
-quant_path = '../../results/smoke/quantized'
+quant_path = '/shared/yiminl50/quantized/awq-smoke/quantized'    # 落 /shared 大盘
 quant_config = {'zero_point': True, 'q_group_size': 128, 'w_bit': 4, 'version': 'GEMM'}
 
 model = AutoAWQForCausalLM.from_pretrained(model_path)
@@ -113,24 +119,27 @@ print(f'Saved to {quant_path}')
 "
 ```
 
-**判定**：脚本不挂、`results/smoke/quantized/` 出现 `model.safetensors` + `config.json`。
+**判定**：脚本不挂、`/shared/yiminl50/quantized/awq-smoke/quantized/` 出现 `model.safetensors` + `config.json`。
 
-> Smoke 产物默认不进 git（`.gitignore` 屏蔽 `*/results/smoke/`）。
+> 量化产物按服务器约定落 `$QUANTIZED/awq-smoke/quantized/`（11TB 大盘），不挤 `/home` 的 915GB 系统盘。
 
-## §7 Canonical 跑（lab，LLaMA-2-7B，~60 min）
+## §7 Canonical 跑（LLaMA-2-7B，~60 min）
+
+LLaMA-2-7B 量化峰值显存 ~14 GB，单张 3090（24 GB）足够。开 tmux 后台跑。
 
 ### §7.1 量化（~30 min）
 
 ```bash
-cd AWQ/third_party/AutoAWQ
-mkdir -p ../../results
+tmux new -s awq-canonical
+conda activate quant-awq
+cd ~/projects/reproduce/AWQ/third_party/AutoAWQ
 
-python -c "
+CUDA_VISIBLE_DEVICES=0 python -c "
 from awq import AutoAWQForCausalLM
 from transformers import AutoTokenizer
 
 model_path = 'meta-llama/Llama-2-7b-hf'
-quant_path = '../../results/quantized_w4g128'
+quant_path = '/shared/yiminl50/quantized/awq-w4g128/quantized'
 quant_config = {'zero_point': True, 'q_group_size': 128, 'w_bit': 4, 'version': 'GEMM'}
 
 model = AutoAWQForCausalLM.from_pretrained(model_path)
@@ -139,19 +148,23 @@ model.quantize(tokenizer, quant_config=quant_config)
 model.save_quantized(quant_path)
 tokenizer.save_pretrained(quant_path)
 print(f'Saved to {quant_path}')
-" 2>&1 | tee ../../results/canonical_w4g128_quant_stdout.txt
+" 2>&1 | tee ~/projects/reproduce/AWQ/results/canonical_w4g128_quant_stdout.txt
 ```
 
-> 量化中 GPU 峰值 ~14 GB；如果 OOM 看 §10。
+> 注意：`AWQ/results/canonical_w4g128_quant_stdout.txt` 是小文本（几 MB），保留进 git 当复现证据。量化产物本身在 `/shared`。
+
+> 如果 OOM 看 §10。多 GPU 不要 `device_map='auto'`；AWQ 量化是 layer-wise 顺序跑，单卡足够。
 
 ### §7.2 PPL 评测（~5 min，用上游脚本）
 
 ```bash
-# 在 AWQ/third_party/AutoAWQ 目录
-python examples/eval.py \
-    --model_path ../../results/quantized_w4g128 \
+conda activate quant-awq
+cd ~/projects/reproduce/AWQ/third_party/AutoAWQ
+
+CUDA_VISIBLE_DEVICES=0 python examples/eval.py \
+    --model_path /shared/yiminl50/quantized/awq-w4g128/quantized \
     --tasks wikitext \
-    2>&1 | tee ../../results/canonical_w4g128_ppl_stdout.txt
+    2>&1 | tee ~/projects/reproduce/AWQ/results/canonical_w4g128_ppl_stdout.txt
 ```
 
 > 上游 `examples/eval.py` 走 `awq.evaluation.evaluate_perplexity`（不是 lm-eval-harness 的 wikitext task），输出 WikiText-2 PPL 单值。
@@ -159,22 +172,26 @@ python examples/eval.py \
 ### §7.3 Zero-shot 评测（~25 min，用 lm-eval-harness CLI）
 
 ```bash
-# 在 AWQ/third_party/AutoAWQ 目录
-python -m lm_eval \
+conda activate quant-awq
+cd ~/projects/reproduce/AWQ/third_party/AutoAWQ
+
+CUDA_VISIBLE_DEVICES=0 python -m lm_eval \
     --model hf \
-    --model_args pretrained=../../results/quantized_w4g128,trust_remote_code=True \
+    --model_args pretrained=/shared/yiminl50/quantized/awq-w4g128/quantized,trust_remote_code=True \
     --tasks piqa,arc_easy,arc_challenge,hellaswag,winogrande,openbookqa \
     --batch_size 1 \
-    --output_path ../../results/canonical_w4g128_zeroshot.json \
-    2>&1 | tee ../../results/canonical_w4g128_zeroshot_stdout.txt
+    --output_path ~/projects/reproduce/AWQ/results/canonical_w4g128_zeroshot.json \
+    2>&1 | tee ~/projects/reproduce/AWQ/results/canonical_w4g128_zeroshot_stdout.txt
 ```
 
-> 这里 lm-eval 把 quantized model 当 HF causal LM 加载——AutoAWQ 已注册到 transformers AutoModel，所以 `--model hf` 直接能用。无需额外 hook。
+> lm-eval 把 quantized model 当 HF causal LM 加载——AutoAWQ 已注册到 transformers AutoModel，所以 `--model hf` 直接能用。无需额外 hook。
+>
+> `_zeroshot.json`（小 JSON）和 `_zeroshot_stdout.txt` 保留进 git；模型本身仍在 `/shared`。
 
 ### §7.4 Weight memory 测量
 
 ```bash
-du -sh ../../results/quantized_w4g128/*.safetensors
+du -sh /shared/yiminl50/quantized/awq-w4g128/quantized/*.safetensors
 # 期望: ~3.7 GB（INT4 packed），论文 anchor
 ```
 
@@ -182,6 +199,7 @@ du -sh ../../results/quantized_w4g128/*.safetensors
 
 ```bash
 # 从 zeroshot.json 抽 6 项 acc
+cd ~/projects/reproduce
 python -c "
 import json
 d = json.load(open('AWQ/results/canonical_w4g128_zeroshot.json'))['results']
@@ -217,7 +235,7 @@ grep -i "perplexity\|ppl" AWQ/results/canonical_w4g128_ppl_stdout.txt | tail -5
 - 模型 commit SHA: `<huggingface-cli scan-cache 看 meta-llama/Llama-2-7b-hf>`
 - AutoAWQ vendor commit: `<git -C third_party/AutoAWQ rev-parse HEAD>`
 - 环境: torch <版本>, transformers <版本>, autoawq 0.2.9
-- GPU: <型号 + VRAM>
+- GPU: NVIDIA RTX 3090 24GB × N（用了哪张/哪几张）
 - 时间: <开始> → <结束>（量化 X min，eval Y min）
 ```
 
@@ -229,8 +247,13 @@ grep -i "perplexity\|ppl" AWQ/results/canonical_w4g128_ppl_stdout.txt | tail -5
 跳过 kernels：`pip install -e ".[eval]"`。**不影响量化质量与 PPL**，只让推理慢。
 
 ### 量化时 OOM
-- 确认没别的进程占 VRAM：`nvidia-smi`
-- AutoAWQ 量化逐 transformer block 跑，`from_pretrained` 时加 `device_map='auto'` 让 accelerate 分流
+- `gpu` 看是不是别的用户/进程占了 VRAM（4 张卡多用户共享）
+- 用 `CUDA_VISIBLE_DEVICES=<idx>` 明确指定空闲卡
+- 7B 量化峰值 ~14 GB，单张 3090（24 GB）富裕；如果还 OOM，重启 Python 进程清残留 VRAM
+- AutoAWQ 量化逐 transformer block 跑，`from_pretrained` 时加 `device_map='auto'` 让 accelerate 分流（多卡）
+
+### 多用户 GPU 冲突
+开跑前 `gpu`（= `nvidia-smi`）看其它用户（canying / jingchl6 / yeq6 / zhihenc5）在用哪张。挑空的，`CUDA_VISIBLE_DEVICES=<idx>` 显式锁定。**不要省略这一步**让脚本默认抓 GPU 0。
 
 ### `import awq` 报 Triton 相关 ImportError
 torch 2.4 + Triton 自带版本不兼容某些 GPU。临时 workaround：`pip install triton==2.3.1`。
@@ -240,3 +263,6 @@ torch 2.4 + Triton 自带版本不兼容某些 GPU。临时 workaround：`pip in
 
 ### PPL 比 anchor 差 > 0.3
 核对 model commit SHA、calibration 切片、上游 commit；再去 AutoAWQ issues 看已知 bug。**不要刷参数。**
+
+### 跑长任务 tmux 掉了 / ssh 断了
+始终用 `tmux new -s <name>` 跑量化 + eval。断线后 `tmux attach -t <name>` 接回。`tmux ls` 看所有会话。
