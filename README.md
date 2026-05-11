@@ -18,7 +18,3 @@
 ## 环境
 
 每方法独立 conda env，避免依赖冲突。详见各方法子目录 README 与 `scripts/`。
-
-## 操作手册
-
-[`docs/howto-reproduce.md`](docs/howto-reproduce.md) — 从工具链安装到单方法 walkthrough 的全流程。

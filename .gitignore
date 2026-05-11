@@ -56,3 +56,7 @@ models/
 
 # Claude Code 本地权限/工具配置（不上传）
 .claude/settings.local.json
+
+# 内部规划 / 操作手册（本地保留，不进 git）
+docs/howto-reproduce.md
+docs/superpowers/

@@ -1,6 +1,6 @@
 # AWQ — LLaMA-2-7B W4-g128 源码复现
 
-> **核心理念**：从 `third_party/AutoAWQ` 源码 editable install (`pip install -e .`)，**不**用 `pip install autoawq` pip wheel。这样跑的就是 vendor 锁定那一版代码，Phase 2 研读 = Phase 1 实跑的同一份源代码，可改可调。
+> **核心理念**：从 `third_party/AutoAWQ` 源码 editable install (`pip install -e .`)，**不**用 `pip install autoawq` pip wheel。这样跑的就是 vendor 锁定那一版代码，可改可调。
 
 > **上游状态**：AutoAWQ 已 [officially deprecated](https://github.com/casper-hansen/AutoAWQ#news-the-vllm-project-has-fully-adopted-autoawq)，最后官测 torch 2.6.0 / transformers 4.51.3。我们 vendor 一份固定版本，不受未来 API 变动影响。
 
@@ -43,7 +43,7 @@ pip install -e ".[kernels,eval]"
 ```
 
 含义：
-- `-e`：editable install，源码改动立即生效（Phase 2 调试 / 加 print 必备）
+- `-e`：editable install，源码改动立即生效（调试加 print 时必备）
 - `[kernels]`：拉 `autoawq-kernels`（INT4 GEMM 推理 kernel）+ `flash-attn>=2.2`
 - `[eval]`：拉 `lm_eval==0.4.1` + `tabulate` + `protobuf` + `evaluate` + `scipy`（跑上游 `examples/eval.py` 用）
 
@@ -239,32 +239,4 @@ torch 2.4 + Triton 自带版本不兼容某些 GPU。临时 workaround：`pip in
 确认 transformers ≥ 4.45（autoawq setup.py 拉的版本应满足）；老版本 transformers 不识别 AWQ config。
 
 ### PPL 比 anchor 差 > 0.3
-按 `docs/howto-reproduce.md` §7 排查：先核对 model commit SHA、calibration 切片、上游 commit；再开 issue 看 AutoAWQ 已知 bug。**不要刷参数。**
-
-## §11 Phase 2 源码研读入口
-
-跑完 Phase 1 后，按以下文件展开 `docs/reports/awq.md` 的 5 节笔记：
-
-| 文件 | 关注点 |
-|------|--------|
-| `awq/quantize/quantizer.py` | 核心 AWQ 量化（搜 `_search_best_scale`, `_compute_best_clip`） |
-| `awq/quantize/scale.py` | activation-aware 缩放算法本体 |
-| `awq/models/base.py` | `AutoAWQForCausalLM.quantize` orchestrator + 逐 block 流程 |
-| `awq/models/llama.py` | LLaMA 适配（modules_to_not_convert 等） |
-| `awq/modules/linear/gemm.py` | INT4 GEMM kernel binding（autoawq-kernels） |
-| `awq/modules/linear/gemv.py` | INT4 GEMV kernel binding（batch=1 推理用） |
-| `awq/evaluation/eval_utils.py` | `evaluate_perplexity` 实现，对照 GPTQ 协议看差异 |
-
-5 节模板（见 `docs/superpowers/specs/2026-05-09-quant-reproduce-design.md` §3.6）：
-
-1. **算法回顾** — activation-aware salient-channel scaling 一段
-2. **官方代码地图** — `quantize()` → 真正动 weights 的调用栈
-3. **关键实现选择** — scale 网格搜索粒度 / clip 启发式 / per-channel vs per-tensor
-4. **硬件相关注释** — autoawq-kernels GEMM vs GEMV，对 NPU 友好度评论
-5. **如果让我再写一遍** — Phase 3 unified pipeline 的素材
-
----
-
-## 附：与 howto-reproduce.md §5 的偏差
-
-`docs/howto-reproduce.md` §5 模板假设 `examples/quantize.py` 有 argparse；当前 vendor commit `88e4c76` 的 `examples/quantize.py` 是 hardcoded Qwen2.5 demo（19 行无 CLI），所以本 README 用 `python -c "..."` inline 等价代码。howto §5.4 line 644 已自带"实际参数名以 vendor 为准"的免责声明，本偏差合规。
+核对 model commit SHA、calibration 切片、上游 commit；再去 AutoAWQ issues 看已知 bug。**不要刷参数。**
