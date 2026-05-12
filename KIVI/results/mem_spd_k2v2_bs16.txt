@@ -1,0 +1,7 @@
+/shared/yiminl50/conda_envs/quant-kivi/lib/python3.10/site-packages/transformers/utils/hub.py:127: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:01<00:01,  1.66s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.05s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.14s/it]
+bs: 16, seqlen: 160+338
+model:/shared/yiminl50/models/llama-2-7b-hf
+used time: 15291.654586791992 ms
+peak mem: 15.389273166656494 GB

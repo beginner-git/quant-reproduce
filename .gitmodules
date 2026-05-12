@@ -4,3 +4,6 @@
 [submodule "BiLLM/third_party/BiLLM"]
 	path = BiLLM/third_party/BiLLM
 	url = https://github.com/Aaronhuang-778/BiLLM
+[submodule "KIVI/third_party/KIVI"]
+	path = KIVI/third_party/KIVI
+	url = https://github.com/jy-yuan/KIVI
